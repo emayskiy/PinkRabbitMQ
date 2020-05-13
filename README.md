@@ -1,26 +1,48 @@
 # PinkRabbitMQ library
-[![Build Status](http://ci.bit-erp.ru/buildStatus/icon?job=ci/buildCProject/steps/buildCProject)](https://share.bit-erp.ru:4343)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/BITERP/PinkRabbitMQ/blob/master/LICENSE)
 [![GitHub release](https://img.shields.io/github/release/BITERP/PinkRabbitMQ.svg)](https://github.com/BITERP/PinkRabbitMQ/releases)
 
-[![Sonar bugs](https://code.bit-erp.ru/sonardev/api/project_badges/measure?project=PinkRabbitMQ&metric=bugs)](https://code.bit-erp.ru/sonardev/dashboard?id=PinkRabbitMQ)
-[![Sonar code smells](https://code.bit-erp.ru/sonardev/api/project_badges/measure?project=PinkRabbitMQ&metric=code_smells)](https://code.bit-erp.ru/sonardev/dashboard?id=PinkRabbitMQ)
-[![Sonar dublications](https://code.bit-erp.ru/sonardev/api/project_badges/measure?project=PinkRabbitMQ&metric=duplicated_lines_density)](https://code.bit-erp.ru/sonardev/dashboard?id=PinkRabbitMQ)
-[![Sonar lines of code](https://code.bit-erp.ru/sonardev/api/project_badges/measure?project=PinkRabbitMQ&metric=ncloc)](https://code.bit-erp.ru/sonardev/dashboard?id=PinkRabbitMQ)
-[![Sonar technical debt](https://code.bit-erp.ru/sonardev/api/project_badges/measure?project=PinkRabbitMQ&metric=sqale_index)](https://code.bit-erp.ru/sonardev/dashboard?id=PinkRabbitMQ)
-[![Sonar vulnerables](https://code.bit-erp.ru/sonardev/api/project_badges/measure?project=PinkRabbitMQ&metric=vulnerabilities)](https://code.bit-erp.ru/sonardev/dashboard?id=PinkRabbitMQ)
+[![Sonar bugs](https://code.bit-erp.ru/sonar/api/project_badges/measure?project=PinkRabbitMQ&metric=bugs)](https://code.bit-erp.ru/sonar/dashboard?id=PinkRabbitMQ)
+[![Sonar code smells](https://code.bit-erp.ru/sonar/api/project_badges/measure?project=PinkRabbitMQ&metric=code_smells)](https://code.bit-erp.ru/sonar/dashboard?id=PinkRabbitMQ)
+[![Sonar dublications](https://code.bit-erp.ru/sonar/api/project_badges/measure?project=PinkRabbitMQ&metric=duplicated_lines_density)](https://code.bit-erp.ru/sonar/dashboard?id=PinkRabbitMQ)
+[![Sonar lines of code](https://code.bit-erp.ru/sonar/api/project_badges/measure?project=PinkRabbitMQ&metric=ncloc)](https://code.bit-erp.ru/sonar/dashboard?id=PinkRabbitMQ)
+[![Sonar technical debt](https://code.bit-erp.ru/sonar/api/project_badges/measure?project=PinkRabbitMQ&metric=sqale_index)](https://code.bit-erp.ru/sonar/dashboard?id=PinkRabbitMQ)
+[![Sonar vulnerables](https://code.bit-erp.ru/sonar/api/project_badges/measure?project=PinkRabbitMQ&metric=vulnerabilities)](https://code.bit-erp.ru/sonar/dashboard?id=PinkRabbitMQ)
 
 # Введение
 Внешняя Native API компонента для 1C 8.3, которая реализует методы для работы с сервером Rabbit MQ через TCP IP протокол. Компонента поддерживается командой разработки [БИТ.Адаптер](https://bit-erp.ru/adapter) и используется в БИТ.Адаптере. Ид компоненты - PinkRabbitMQ. Компонента поставляется для 32 и 64 битной платформы 1С.
 
-## Ограничения
+## Поддерживаемые системы
 
-* Компонента поддерживает только WIndows
+* Windows 32 и 64 бит
+* Linux 64 бит
 
 ## API
-Компонента имеет ряд методов для работы из встроенного языка 1С. Параметры с тегом [НЕ РЕАЛИЗОВАНО] имеют пустую реализацию, но передавать их все равно требуется. Параметры с тегом [НЕОБЯЗАТЕЛЬНЫЙ] можно не передавать. Список методов:
+Компонента реализует протокол [AMQP 0.9.1](https://www.rabbitmq.com/resources/specs/amqp0-9-1.pdf).
+Компонента имеет ряд методов для работы из встроенного языка 1С. Параметры с тегом [НЕ РЕАЛИЗОВАНО] имеют пустую реализацию, но передавать их все равно требуется. Параметры с тегом [НЕОБЯЗАТЕЛЬНЫЙ] можно не передавать. 
 
-<b>Connect</b> - устанавливает соединение с сервером RabbitMQ
+### Список свойств комоненты, связанных с сообщением:
+
+* correlationId - строка, чтение и запись
+* messageId - строка, чтение и запись
+* Type - строка, чтение и запись
+* AppId - строка, чтение и запись
+* ContentEncoding - строка, чтение и запись
+* ContentType - строка, чтение и запись
+* UserId - строка, чтение и запись. В данное свойство разрешается передавать только логин пользователя, использованный для установки соединения
+* ClusterId - строка, чтение и запись
+* Expiration - число строкой, чтение и запись. Передача строки, отличной от числовой, приведет к вызову исключения.
+* ReplyTo - строка, чтение и запись
+
+Эти свойства передаются в качестве метаданных вместе с сообщением в RabbitMQ. Их можно прочитать также на стороне получателя - они реинициализируется в момент вызова basicConsumeMessage().
+
+### Список прочих свойств:
+
+* Version - версия компоненты, только чтение
+
+### Список методов:
+
+<b>Connect</b> - устанавливает соединение с сервером RabbitMQ. Таймаут - 5 секунд. Если в течение этого времени сервер недоступен, а также указаны  неверные логин, пароль или vhost, то будет возвращена ошибка, которая может быть получена через метод GetLastError. 
 
 Параметры:
 * host - Строка - Адрес сервера RabbitMQ
@@ -35,11 +57,11 @@
 Параметры:
 * name - Строка - Имя exchange
 * type - Строка - Тип точки обмена. Поддерживаются "direct", "fanout", "topic"
-* onlyCheckIfExists - Булево - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> Не создавать новую, выбросить исключение, если такой точки нет.
+* onlyCheckIfExists - Булево - Не создавать новую, выбросить исключение, если такой точки нет.
 * durable - Булево - Сохранять сообщения на диске на случай рестарта RMQ (не рекомендуется)
 * autodelete - Булево -  Удалить после того, как от точки будут отвязаны все очереди.
 
-<b>DeleteExchange</b> - Удаляет очередь с сервера
+<b>DeleteExchange</b> - Удалить точку обмена
 
 Параметры:
 * name - Строка- Имя точки обмена.
@@ -49,10 +71,11 @@
 
 Параметры:
 * name -  Строка - Имя объявляемой очереди.
-* onlyCheckIfExists  - Булево - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> Не создавать очередь с таким именем, использовать существующую
+* onlyCheckIfExists  - Булево - Не создавать очередь с таким именем, использовать существующую
 * save - Булево - Кешировать сообщения на диске, на случай падения RMQ.
-* exclusive - Булево - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> Только текущее соединение может иметь доступ к этой очереди.
+* exclusive - Булево - [НЕ РЕАЛИЗОВАНО]  Только текущее соединение может иметь доступ к этой очереди.
 * autodelete - Булево - Удалить очередь если к ней был подключен, а затем отключен читающий клиент.
+* maxPriority - Число - [НЕОБЯЗАТЕЛЬНЫЙ] устанавливает максимальное значение приоритета, которое может быть затем установлено для отправляемых сообщений через метод setPriority. Если 0 - то приоритет не используется. По-умолчанию 0.
 
 Возвращаемое значение:
  - Имя очереди, заданное явно в 1-м параметре.
@@ -84,21 +107,27 @@
 * exchange - Строка - Имя точки в которую отправляется сообщение
 * routingKey - Строка - Ключ маршрутизации (см. руководство RMQ)
 * message - Строка - Тело сообщения
-* livingTime - Число - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> Время жизни сообщения в миллисекундах
-* persist - Булево - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> Сбрасывать сообщение на диск
+* livingTime - Число - [НЕ РЕАЛИЗОВАНО]  Время жизни сообщения в миллисекундах
+* persist - Булево - Сбрасывать сообщение на диск
+
+<b>BasicAck</b> Отсылает серверу подтверждение (ack), что сообщение обработано и его можно удалить. Подтвердить можно любое прочитанное сообщение.
+
+Параметры:
+* messageTag - число - тег сообщения, который возвращается в параметре метода BasicConsumeMessage
 
 <b>BasicReject</b> - Отказывается от последнего полученного сообщения. Работает по принципу Ack, но в обратную сторону.
 
-Параметры отсутствуют
+Параметры:
+* messageTag - число - тег сообщения, который возвращается в параметре метода BasicConsumeMessage
 
 <b>BasicConsume</b> - Начать чтение. Регистрирует потребителя сообщений для очереди.
 
 Параметры:
 * queue - Строка - Очередь из которой будем читать сообщения.
-* consumerId - Строка - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> имя потребителя. Если не задан, то имя потребителя сгенерирует сервер и вернет из метода
-* noConfirm - Булево - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> не ждать подтверждения обработки. Сообщения будут удалены из очереди сразу после отправки на клиента.
-* exclusive - Булево - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> монопольно захватить очередь 
-* selectSize - Число - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> количество сообщений единовременно отправляемых клиенту. Оптимизационный параметр, если > 1 усложняет программирование клиента
+* consumerId - Строка - [НЕ РЕАЛИЗОВАНО]  имя потребителя. Если не задан, то имя потребителя сгенерирует сервер и вернет из метода
+* noConfirm - Булево - [НЕ РЕАЛИЗОВАНО]  не ждать подтверждения обработки. Сообщения будут удалены из очереди сразу после отправки на клиента.
+* exclusive - Булево - [НЕ РЕАЛИЗОВАНО]  монопольно захватить очередь 
+* selectSize - Число - количество единовременно  считываемых сообщений из очереди в кеш компоненты. Оптимизационный параметр, который влияет на скорость забора сообщений. Рекомендуемый диапазон 100-1000. Нежелательно устанавливать слишком высокие значения, т.к. чтение большого числа накопленных сообщений в очереди может спровоцировать нехватку памяти на клиенте 1С и падение компоненты без вызова исключения.
 
 Возвращаемое значение:
  - Строка. Имя потребителя, сгенерированное сервером или переданное в параметре ИмяПотребителя.
@@ -106,18 +135,32 @@
 <b>BasicConsumeMessage</b> - Получить сообщение
 
 Параметры:
-* consumerId - Строка - <span style="color:red">[НЕ РЕАЛИЗОВАНО]</span> Имя зарегистрированного потребителя
+* consumerId - Строка - [НЕ РЕАЛИЗОВАНО]  Имя зарегистрированного потребителя
 * outdata - Строка - Выходной параметр. Тело сообщения.
-* timeout - Число - Таймаут ожидания сообщения в миллисекундах. 0 означает без ожидания
+* messageTag - Число - Выходной параметр. Тег сообщения для подтверждения через метод BasicAck
+* timeout - Число - Таймаут ожидания сообщения в миллисекундах. Не рекомендуется ставить параметр слшком низким, т.к. сообщение просто может не успеть прийти из очереди. Рекомендуемый диапазон 3000-60000.
+
+Возвращаемое значение:
+ - Булево. Истина, если из очереди прочитано очередное сообщение. Ложь, если очередь пустая.
 
 <b>BasicCancel</b> - Закрывает канал для чтения сообщений
 
 Параметры:
 * channelId - Строка - Имя созданного ранее потребителя.
 
-<b>BasicAck</b> Отсылает серверу подтверждение (ack), что сообщение обработано и его можно удалить. Подтвердить можно только последнее прочитанное сообщение.
 
-Параметры отсутствуют
+<b>SetPriority</b> -устанавливает приоритет для всех отправляемых сообщений. Если значение равно 0, то приоритет не будет установлен.
+
+Параметры:
+* priority - Число - значение в диапазоне разрешенного приоритета для очереди, но не более 255.
+
+<b>GetPriority</b> - получает приоритет для последнего считанного сообщения
+
+Параметры:
+Отсутствуют
+
+Возвращаемое значение:
+ - числовое значение приоритета от 0 до 255 для сообщения
 
 <b>GetLastError</b> - получает информацию о последней ошибке
 
@@ -127,7 +170,53 @@
  - Строка - Последнее сообщение ошибки
 
 
-Описание параметров методов см. в заголовке RabbitMQClient.h
+## Правила работы с компонентой из 1С
+1. Завершать работу с компонентой посредством обнуления объекта компоненты. Например:
+
+``` bsl
+Компонента = Новый("AddIn.BITERP.PRMQMOBILE");
+// Работа с компонентой
+Компонента = Неопределено;
+```
+2. Все выходные параметры в методах компоненты передавать как Неопределено или пустая строка, а также обнулять возвращенные значения. <b>Несоблюдение этого простого правила приводит к огромным утечкам памяти!!! </b> Например:
+
+```bsl
+Клиент = Новый("AddIn.BITERP.PinkRabbitMQ");
+ТекстСообщения = "";
+ТегСообщения = 0;
+Пока Клиент.BasicConsumeMessage(Потребитель, ТекстСообщения, ТегСообщения, Таймаут) Цикл
+    // Работа с компонентой
+    // ...
+    //
+    ТекстСообщения = ""; 
+    ТегСообщения = 0; // при каждой итерации очищаем память по указателю, который неявной хранится в этой переменной
+КонецЦикла;
+```
+
+3. Не вызывать исключения внутри цикла чтения сообщений. Это приводит к потерянной памяти в rphost-е, т.к. внутри компоненты могут остаться закешированные сообщения, которые не попали в алгоритм очистки ссылок.
+
+```bsl
+Клиент = Новый("AddIn.BITERP.PinkRabbitMQ");
+ВыходнойПараметр = "";
+Пока Клиент.BasicConsumeMessage(Потребитель, ВыходнойПараметр, Таймаут) Цикл
+    // Работа с компонентой
+    Если Клиент.CorrelationId <> "МОЙ_ИД" Тогда
+        ВызватьИсключение "Ошибка чтения свойств!"; // ТАК ДЕЛАТЬ СТРОГО НЕ РЕКОМЕНДУЕТСЯ!!!
+    КонецЕсли;
+    ВыходнойПараметр = "";
+КонецЦикла;
+```
+
+4. На сервере все исключения компоненты обрабратывать через Попытку ... Иключение с вызовом в секциии исключения метода GetLastError() для получения истинной детальной ошибки. Пример
+
+```bsl
+Клиент = Новый("AddIn.BITERP.PinkRabbitMQ");
+Попытка
+    Клиент.DeclareQueue(ИмяОчереди, Ложь, Ложь, Ложь, Ложь);
+Исключение
+    ВызватьИсключение Клиент.GetLastError();
+КонецПопытки
+```
 
 ## Примеры
 
@@ -160,6 +249,7 @@
     ИмяОчереди = "testroute";
     ОтправляемоеСообщение = "Test";
     ОтветноеСообщение = "";
+    ТегСообщения = 0;
     
     УстановитьВнешнююКомпоненту("ОбщийМакет.PinkRabbitMQ");
     ПодключитьВнешнююКомпоненту("ОбщийМакет.PinkRabbitMQ", "BITERP", ТипВнешнейКомпоненты.Native);
@@ -170,9 +260,11 @@
     Клиент.BasicPublish("", ИмяОчереди, ОтправляемоеСообщение, 0, Ложь);
     Попытка
         Потребитель = Клиент.BasicConsume(ИмяОчереди, "", Истина, Ложь, 0);
-        Пока Клиент.BasicConsumeMessage("", ОтветноеСообщение, 5) Цикл
-            Клиент.BasicAck();
+        Пока Клиент.BasicConsumeMessage("", ОтветноеСообщение, ТегСообщения, 5000) Цикл
+            Клиент.BasicAck(ТегСообщения);
             Сообщить("Успешно! Из очереди прочитано сообщение " + ОтветноеСообщение);
+            ОтветноеСообщение = ""; // Обнуляем, чтобы избежать утечку памяти
+            ТегСообщения = 0; // Обнуляем, чтобы избежать утечку памяти
         КонецЦикла;
         Клиент.BasicCancel("");
     Исключение
@@ -233,7 +325,12 @@ cmake --build
 - PocoFoundationd.lib;
 13. Скомпилировать компоненту через проект
 
-## Сборка проекта через cmake
+## Разворачивание окружения разработки для Linux из-под WIndows 10
+1. Установить Visual Studio Community 2019 с последними обновлениями
+2. Развернуть Linux system for Windows 10 и подключить VS Studio к своей машине [Туториал](https://devblogs.microsoft.com/cppblog/targeting-windows-subsystem-for-linux-from-visual-studio/)
+3. Запустить проект [PinrRabbitMQ для Linux](PinkRabbitMQLinux/PinkRabbitMQLinux.sln)
+
+## Сборка проекта через cmake для Windows 10
 ```
 mkdir build
 cd build
@@ -241,11 +338,19 @@ cmake ..
 cmake --build . --config Release
 ```
 
+## Сборка проекта через Visual Studio для Linux
+
+1. Запустить проект [PinrRabbitMQ для Linux](PinkRabbitMQLinux/PinkRabbitMQLinux.sln) 
+2. Открыть свойства проекта и в меню  Confugartion properties -> General -> Configuration type выбрать Dynamic library (so)
+3. Скомпилировать проект через f5
+4. Либа будет скомпилирована в каталоге ~/projects/PinkRabbitMQLinux/bin/x64/debug/ удаленной машины
+
 ## Лицензия
 
 Лицензировано на условиях MIT. Смотрите файл [LICENSE](LICENSE)
 
 ## Используемые сторонние продукты
 
-* [AMQP-CPP](https://github.com/CopernicaMarketingSoftware/AMQP-CPP) - для взаимодействия с Rabbit MQ на основе [лицензии Apache](licenses/AMQP-CPP_LICENSE)
+* [AMQP-CPP](https://github.com/CopernicaMarketingSoftware/AMQP-CPP) - для взаимодействия с RabbitMQ на основе [лицензии Apache](licenses/AMQP-CPP_LICENSE)
 * [POCO](https://github.com/pocoproject/poco) - для работы с сокетом по TCP протоколу для windows на основе [лицензии Boost](licenses/POCO_LICENSE)
+* [LIBEVENT](https://github.com/libevent/libevent) - для работы с сокетом по TCP протоколу для Linux на основе [3-clause BSD лицензии](https://libevent.org/LICENSE.txt)
