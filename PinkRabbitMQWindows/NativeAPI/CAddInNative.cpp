@@ -91,7 +91,7 @@ static const wchar_t *g_MethodNamesRu[] = {
 	L"GetPriority",
 };
 
-static const wchar_t g_kClassNames[] = L"CAddInNative";
+static const wchar_t g_kClassNames[] = L"PinkRabbitMQ";
 static IAddInDefBase *pAsyncEvent = NULL;
 static void *consumedMessage = NULL;
 
@@ -175,7 +175,7 @@ void CAddInNative::Done()
 //---------------------------------------------------------------------------//
 bool CAddInNative::RegisterExtensionAs(WCHAR_T** wsExtensionName)
 { 
-    const wchar_t *wsExtension = L"PinkRabbitMQ";
+    const wchar_t *wsExtension = g_kClassNames;
     size_t iActualSize = ::wcslen(wsExtension) + 1;
 
     if (m_iMemory)
@@ -611,6 +611,8 @@ bool CAddInNative::basicConsumeMessage(tVariant* pvarRetValue, tVariant* paParam
 bool CAddInNative::getPriority(tVariant* pvarRetValue, tVariant* paParams) {
 	int priority = client->getPriority();
 
+	TV_VT(pvarRetValue) = VTYPE_I4;
+	TV_INT(pvarRetValue) = priority;
 	return true;
 }
 
