@@ -4,20 +4,29 @@
 #include "Utils.h"
 #include <Poco/Exception.h>
 #include <Poco/Net/NetException.h>
+#include <Poco/JSON/Parser.h>
 #include <thread>
 #include "AuthException.cpp"
 #include "ThreadLooper.cpp"
 
-bool RabbitMQClient::connect(const std::string& host, const uint16_t port, const std::string& login, const std::string& pwd, const std::string& vhost)
+RabbitMQClient::RabbitMQClient(): readQueue(1), connection(nullptr) 
+{
+}
+
+bool RabbitMQClient::connect(const std::string& host, const uint16_t port, const std::string& login, const std::string& pwd, const std::string& vhost, bool ssl)
 {
 	updateLastError("");
 	bool connected = false;
 	try
 	{
-		handler = new SimplePocoHandler(host, port);
+		if (connection) {
+			closeConnection();
+		}
+		handler.reset(new SimplePocoHandler(host, port, ssl));
 		newConnection(login, pwd, vhost);
 
-		channel = new AMQP::Channel(connection);
+		channel.reset(openChannel());
+		publChannel.reset(openChannel());
 
 		connected = true;
 	}
@@ -31,14 +40,15 @@ bool RabbitMQClient::connect(const std::string& host, const uint16_t port, const
 	}
 	catch (const Poco::Net::NetException & ex)
 	{
-		updateLastError(ex.what());
+		updateLastError(ex.message().length() ? ex.message().c_str() : ex.what());
 	}
 	return connected;
 }
 
 void RabbitMQClient::newConnection(const std::string& login, const std::string& pwd, const std::string& vhost) {
 
-	connection = new AMQP::Connection(handler, AMQP::Login(login, pwd), vhost);
+	connection = new AMQP::Connection(handler.get(), AMQP::Login(login, pwd), vhost);
+	handler->setConnection(connection);
 
 	const uint16_t timeout = 5000;
 	std::chrono::milliseconds timeoutMs{ timeout };
@@ -71,7 +81,7 @@ AMQP::Channel* RabbitMQClient::openChannel() {
 	return channelLoc;
 }
 
-bool RabbitMQClient::declareExchange(const std::string& name, const std::string& type, bool onlyCheckIfExists, bool durable, bool autodelete) {
+bool RabbitMQClient::declareExchange(const std::string& name, const std::string& type, bool onlyCheckIfExists, bool durable, bool autodelete, const std::string& propsJson) {
 
 	AMQP::Channel* channelLoc = openChannel();
 	if (channelLoc == nullptr) {
@@ -96,8 +106,16 @@ bool RabbitMQClient::declareExchange(const std::string& name, const std::string&
 	}
 
 	bool result = true;
+	AMQP::Table args;
+	try {
+		fillHeadersFromJson(args, propsJson);
+	}
+	catch (Poco::Exception& e) {
+		updateLastError(e.displayText().c_str());
+		return false;
+	}
 
-	channelLoc->declareExchange(name, topic, (onlyCheckIfExists ? AMQP::passive : 0) | (durable ? AMQP::durable : 0) | (autodelete ? AMQP::autodelete : 0))
+	channelLoc->declareExchange(name, topic, (onlyCheckIfExists ? AMQP::passive : 0) | (durable ? AMQP::durable : 0) | (autodelete ? AMQP::autodelete : 0), args)
 		.onSuccess([this]()
 	{
 		handler->quit();
@@ -145,7 +163,7 @@ bool RabbitMQClient::deleteExchange(const std::string& name, bool ifunused) {
 	return result;
 }
 
-std::string RabbitMQClient::declareQueue(const std::string& name, bool onlyCheckIfExists, bool durable, bool autodelete, uint16_t maxPriority) {
+std::string RabbitMQClient::declareQueue(const std::string& name, bool onlyCheckIfExists, bool durable, bool autodelete, uint16_t maxPriority, const std::string& propsJson) {
 
 	updateLastError("");
 
@@ -154,9 +172,16 @@ std::string RabbitMQClient::declareQueue(const std::string& name, bool onlyCheck
 		return "";
 	}
 
-	AMQP::Table args = AMQP::Table();
+	AMQP::Table args;
 	if (maxPriority != 0) {
 		args.set("x-max-priority", maxPriority);
+	}
+	try {
+		fillHeadersFromJson(args, propsJson);
+	}
+	catch (Poco::Exception& e) {
+		updateLastError(e.displayText().c_str());
+		return "";
 	}
 
 	channel->declareQueue(name, (onlyCheckIfExists ? AMQP::passive : 0) | (durable ? AMQP::durable : 0) | (durable ? AMQP::durable : 0) | (autodelete ? AMQP::autodelete : 0), args)
@@ -206,7 +231,7 @@ bool RabbitMQClient::deleteQueue(const std::string& name, bool ifunused, bool if
 	return result;
 }
 
-bool RabbitMQClient::bindQueue(const std::string& queue, const std::string& exchange, const std::string& routingKey) {
+bool RabbitMQClient::bindQueue(const std::string& queue, const std::string& exchange, const std::string& routingKey, const std::string& propsJson) {
 
 	updateLastError("");
 	bool result = true;
@@ -216,7 +241,15 @@ bool RabbitMQClient::bindQueue(const std::string& queue, const std::string& exch
 		return false;
 	}
 
-	channelLoc->bindQueue(exchange, queue, routingKey)
+	AMQP::Table args;
+	try {
+		fillHeadersFromJson(args, propsJson);
+	}
+	catch (Poco::Exception& e) {
+		updateLastError(e.displayText().c_str());
+		return false;
+	}
+	channelLoc->bindQueue(exchange, queue, routingKey, args)
 		.onSuccess([this]()
 	{
 		handler->quit();
@@ -273,7 +306,7 @@ std::string RabbitMQClient::getMsgProp(int propNum) {
 	return msgProps[propNum];
 }
 
-bool RabbitMQClient::basicPublish(std::string& exchange, std::string& routingKey, std::string& message, bool persistent) {
+bool RabbitMQClient::basicPublish(std::string& exchange, std::string& routingKey, std::string& message, bool persistent, const std::string& propsJson) {
 
 	updateLastError("");
 
@@ -284,35 +317,50 @@ bool RabbitMQClient::basicPublish(std::string& exchange, std::string& routingKey
 
 	bool result = true;
 
-	AMQP::Channel publChannel(connection);
+	if (!publChannel->usable()) {
+		publChannel->close();
+		publChannel.reset(openChannel());
+	}
 
-	publChannel.onReady([&message, &persistent, &exchange, &publChannel, &routingKey, this]()
-	{
-		AMQP::Envelope envelope(message.c_str(), strlen(message.c_str()));
-		if (!msgProps[CORRELATION_ID].empty()) envelope.setCorrelationID(msgProps[CORRELATION_ID]);
-		if (!msgProps[MESSAGE_ID].empty()) envelope.setMessageID(msgProps[MESSAGE_ID]);
-		if (!msgProps[TYPE_NAME].empty()) envelope.setTypeName(msgProps[TYPE_NAME]);
-		if (!msgProps[APP_ID].empty()) envelope.setAppID(msgProps[APP_ID]);
-		if (!msgProps[CONTENT_ENCODING].empty()) envelope.setContentEncoding(msgProps[CONTENT_ENCODING]);
-		if (!msgProps[CONTENT_TYPE].empty()) envelope.setContentType(msgProps[CONTENT_TYPE]);
-		if (!msgProps[USER_ID].empty()) envelope.setUserID(msgProps[USER_ID]);
-		if (!msgProps[CLUSTER_ID].empty()) envelope.setClusterID(msgProps[CLUSTER_ID]);
-		if (!msgProps[EXPIRATION].empty()) envelope.setExpiration(msgProps[EXPIRATION]);
-		if (!msgProps[REPLY_TO].empty()) envelope.setReplyTo(msgProps[REPLY_TO]);
-		if (priority != 0) envelope.setPriority(priority);
-		if (persistent) { envelope.setDeliveryMode(2); }
-		publChannel.publish(exchange, routingKey, envelope);
-		handler->quit();
-	});
+	AMQP::Envelope envelope(message.c_str(), strlen(message.c_str()));
+	if (!msgProps[CORRELATION_ID].empty()) envelope.setCorrelationID(msgProps[CORRELATION_ID]);
+	if (!msgProps[MESSAGE_ID].empty()) envelope.setMessageID(msgProps[MESSAGE_ID]);
+	if (!msgProps[TYPE_NAME].empty()) envelope.setTypeName(msgProps[TYPE_NAME]);
+	if (!msgProps[APP_ID].empty()) envelope.setAppID(msgProps[APP_ID]);
+	if (!msgProps[CONTENT_ENCODING].empty()) envelope.setContentEncoding(msgProps[CONTENT_ENCODING]);
+	if (!msgProps[CONTENT_TYPE].empty()) envelope.setContentType(msgProps[CONTENT_TYPE]);
+	if (!msgProps[USER_ID].empty()) envelope.setUserID(msgProps[USER_ID]);
+	if (!msgProps[CLUSTER_ID].empty()) envelope.setClusterID(msgProps[CLUSTER_ID]);
+	if (!msgProps[EXPIRATION].empty()) envelope.setExpiration(msgProps[EXPIRATION]);
+	if (!msgProps[REPLY_TO].empty()) envelope.setReplyTo(msgProps[REPLY_TO]);
+	if (priority != 0) envelope.setPriority(priority);
+	if (persistent) { envelope.setDeliveryMode(2); }
+	try {
+		if (propsJson.length()) {
+			AMQP::Table args;
+			fillHeadersFromJson(args, propsJson);
+			envelope.setHeaders(args);
+		}
+	}
+	catch (Poco::Exception& e) {
+		updateLastError(e.displayText().c_str());
+		return false;
+	}
 
-	publChannel.onError([&result, this](const char* messageErr)
+	publChannel->startTransaction();
+	publChannel->publish(exchange, routingKey, envelope);
+	publChannel->commitTransaction()
+		.onError([&result, this](const char* messageErr) 
 	{
 		updateLastError(messageErr);
 		handler->quit();
 		result = false;
+	})
+		.onSuccess([this]() 
+	{
+		handler->quit();
 	});
 	handler->loop();
-	publChannel.close();
 	return result;
 }
 
@@ -338,26 +386,30 @@ std::string RabbitMQClient::basicConsume(const std::string& queue, const int _se
 	channel->setQos(_selectSize, true);
 	updateLastError("");
 
+	readQueue.reopen();
+
 	consQueue = queue;
 	channel->consume(consQueue)
 		.onMessage([this](const AMQP::Message& message, uint64_t deliveryTag, bool redelivered)
 	{
-		MessageObject* msgOb = new MessageObject();
-		msgOb->body.assign(message.body(), message.bodySize());
-		msgOb->msgProps[CORRELATION_ID] = message.correlationID();
-		msgOb->msgProps[TYPE_NAME] = message.typeName();
-		msgOb->msgProps[MESSAGE_ID] = message.messageID();
-		msgOb->msgProps[APP_ID] = message.appID();
-		msgOb->msgProps[CONTENT_ENCODING] = message.contentEncoding();
-		msgOb->msgProps[CONTENT_TYPE] = message.contentType();
-		msgOb->msgProps[USER_ID] = message.userID();
-		msgOb->msgProps[CLUSTER_ID] = message.clusterID();
-		msgOb->msgProps[EXPIRATION] = message.expiration();
-		msgOb->msgProps[REPLY_TO] = message.replyTo();
-		msgOb->messageTag = deliveryTag;
-		msgOb->priority = message.priority();
+		MessageObject msgOb;
+		
+		msgOb.body.assign(message.body(), message.bodySize());
+		msgOb.msgProps[CORRELATION_ID] = message.correlationID();
+		msgOb.msgProps[TYPE_NAME] = message.typeName();
+		msgOb.msgProps[MESSAGE_ID] = message.messageID();
+		msgOb.msgProps[APP_ID] = message.appID();
+		msgOb.msgProps[CONTENT_ENCODING] = message.contentEncoding();
+		msgOb.msgProps[CONTENT_TYPE] = message.contentType();
+		msgOb.msgProps[USER_ID] = message.userID();
+		msgOb.msgProps[CLUSTER_ID] = message.clusterID();
+		msgOb.msgProps[EXPIRATION] = message.expiration();
+		msgOb.msgProps[REPLY_TO] = message.replyTo();
+		msgOb.messageTag = deliveryTag;
+		msgOb.priority = message.priority();
+		msgOb.routingKey = message.routingkey();
 
-		readQueue->push(msgOb);
+		readQueue.push(std::move(msgOb));
 	})
 		.onError([this](const char* message)
 	{
@@ -365,7 +417,7 @@ std::string RabbitMQClient::basicConsume(const std::string& queue, const int _se
 	});
 
 	for (int i = 0; i < 1; i++) {
-		threadPool.push(new std::thread(SimplePocoHandler::loopThread, handler));
+		threadPool.push(std::thread(SimplePocoHandler::loopThread, handler.get()));
 	}
 	return "";
 }
@@ -377,27 +429,26 @@ bool RabbitMQClient::basicConsumeMessage(std::string& outdata, std::uint64_t& ou
 
 	std::chrono::milliseconds timeoutSec{ timeout };
 	auto end = std::chrono::system_clock::now() + timeoutSec;
-	while (!readQueue->empty() || (end - std::chrono::system_clock::now()).count() > 0) {
-		if (!readQueue->empty()) {
-			MessageObject* read;
-			readQueue->pop(read);
+	while (!readQueue.empty() || (end - std::chrono::system_clock::now()).count() > 0) {
+		if (!readQueue.empty()) {
+			MessageObject read;
+			readQueue.pop(read);
 
-			outdata = read->body;
-			outMessageTag = read->messageTag;
+			outdata = read.body;
+			outMessageTag = read.messageTag;
 
-			msgProps[CORRELATION_ID] = read->msgProps[CORRELATION_ID];
-			msgProps[TYPE_NAME] = read->msgProps[TYPE_NAME];
-			msgProps[MESSAGE_ID] = read->msgProps[MESSAGE_ID];
-			msgProps[APP_ID] = read->msgProps[APP_ID];
-			msgProps[CONTENT_ENCODING] = read->msgProps[CONTENT_ENCODING];
-			msgProps[CONTENT_TYPE] = read->msgProps[CONTENT_TYPE];
-			msgProps[USER_ID] = read->msgProps[USER_ID];
-			msgProps[CLUSTER_ID] = read->msgProps[CLUSTER_ID];
-			msgProps[EXPIRATION] = read->msgProps[EXPIRATION];
-			msgProps[REPLY_TO] = read->msgProps[REPLY_TO];
-			priority = read->priority;
-
-			delete read;
+			msgProps[CORRELATION_ID] = read.msgProps[CORRELATION_ID];
+			msgProps[TYPE_NAME] = read.msgProps[TYPE_NAME];
+			msgProps[MESSAGE_ID] = read.msgProps[MESSAGE_ID];
+			msgProps[APP_ID] = read.msgProps[APP_ID];
+			msgProps[CONTENT_ENCODING] = read.msgProps[CONTENT_ENCODING];
+			msgProps[CONTENT_TYPE] = read.msgProps[CONTENT_TYPE];
+			msgProps[USER_ID] = read.msgProps[USER_ID];
+			msgProps[CLUSTER_ID] = read.msgProps[CLUSTER_ID];
+			msgProps[EXPIRATION] = read.msgProps[EXPIRATION];
+			msgProps[REPLY_TO] = read.msgProps[REPLY_TO];
+			priority = read.priority;
+			routingKey = read.routingKey;
 
 			return true;
 		}
@@ -435,24 +486,19 @@ bool RabbitMQClient::basicReject(const std::uint64_t& messageTag) {
 
 bool RabbitMQClient::basicCancel() {
 
-
-	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-
 	handler->quitRead();
 
-	readQueue->close();
+	readQueue.close();
+	MessageObject msgOb;
+	while (!readQueue.empty()) {
+		readQueue.pop(msgOb);
+	}
 
-	MessageObject* msgOb;
-	ThreadSafeQueue<MessageObject*>::QueueResult result;
-	while ((result = readQueue->pop(msgOb)) != ThreadSafeQueue<MessageObject*>::CLOSED) {
-		delete msgOb;
-	};
-
-	for (int i = 0; i < threadPool.size(); i++) {
-		std::thread* curr = threadPool.front();
-		curr->join();
+	while (!threadPool.empty()) {
+		threadPool.front().join();
 		threadPool.pop();
 	}
+
 	return true;
 }
 
@@ -465,43 +511,78 @@ int RabbitMQClient::getPriority() {
 	return priority;
 }
 
-WCHAR_T* RabbitMQClient::getLastError() noexcept
+std::string RabbitMQClient::getRoutingKey() {
+	return routingKey;
+}
+
+const WCHAR_T* RabbitMQClient::getLastError() noexcept
 {
-	return LAST_ERROR;
+	return LAST_ERROR.c_str();
 }
 
 void RabbitMQClient::updateLastError(const char* text) {
-	LAST_ERROR = new wchar_t[strlen(text) + 1];
-	Utils::convetToWChar(LAST_ERROR, text);
+	LAST_ERROR.resize(strlen(text)+1);
+	Utils::convetToWChar(&LAST_ERROR[0], text);
 }
 
-RabbitMQClient::~RabbitMQClient() {
+void RabbitMQClient::fillHeadersFromJson(AMQP::Table& headers, const std::string& propsJson)
+{
+	if (!propsJson.length()) {
+		return;
+	}
+	Poco::JSON::Parser parser;
+	Poco::Dynamic::Var result = parser.parse(propsJson);
+	auto object = result.extract<Poco::JSON::Object::Ptr>();
+	Poco::JSON::Object::NameList names;
+	object->getNames(names);
+	for (auto &name : names) {
+		auto value = object->get(name);
+		if (value.isBoolean()) {
+			headers.set(name, value.extract<bool>());
+		}
+		else if(value.isInteger()) 
+		{
+			headers.set(name, value.extract<int64_t>());
+		}
+		else if (value.isString())
+		{
+			headers.set(name, value.extract<std::string>());
+		}
+		else
+		{
+			throw Poco::Exception("Unsupported json type for property " + (name + ": ") + value.type().name());
+		}
+	}
+
+}
+
+void RabbitMQClient::closeConnection() {
 	// Order below need to be kept
 	if (connection != nullptr) {
 		connection->close();
 	}
-	if (handler != nullptr) {
+	if (handler) {
 		handler->quitRead();
 	}
-	for (int i = 0; i < threadPool.size(); i++) {
-		std::thread* curr = threadPool.front();
-		curr->join();
+	readQueue.close();
+
+	MessageObject msgOb;
+	while (!readQueue.empty()) {
+		readQueue.pop(msgOb);
+	}
+	assert(readQueue.empty());
+
+	while (!threadPool.empty()) {
+		threadPool.front().join();
 		threadPool.pop();
 	}
-
-	while (!readQueue->empty()) {
-		MessageObject* msgOb;
-		readQueue->pop(msgOb);
-		delete msgOb;
-	}
-	assert(readQueue->empty());
-	delete readQueue;
-	// 
 
 	if (connection != nullptr) {
 		delete connection;
 	}
-	if (handler != nullptr) {
-		delete handler;
-	}
+	connection = nullptr;
+}
+
+RabbitMQClient::~RabbitMQClient() {
+	closeConnection();
 }

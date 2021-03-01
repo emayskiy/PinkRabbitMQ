@@ -57,6 +57,7 @@ static const wchar_t *g_MethodNames[] = {
 	L"UnbindQueue",
 	L"SetPriority",
 	L"GetPriority",
+	L"GetRoutingKey",
 };
 
 static const wchar_t *g_PropNamesRu[] = {
@@ -89,6 +90,7 @@ static const wchar_t *g_MethodNamesRu[] = {
 	L"UnbindQueue",
 	L"SetPriority",
 	L"GetPriority",
+	L"GetRoutingKey",
 };
 
 static const wchar_t g_kClassNames[] = L"PinkRabbitMQ";
@@ -370,11 +372,11 @@ long CAddInNative::GetNParams(const long lMethodNum)
 	case eMethGetLastError:
 		return 0;
 	case eMethConnect:
-		return 6;
+		return 7;
 	case eMethDeclareQueue:
-		return 6;
+		return 7;
 	case eMethBasicPublish:
-		return 5;
+		return 6;
 	case eMethBasicConsume:
 		return 5;
 	case eMethBasicConsumeMessage:
@@ -388,9 +390,9 @@ long CAddInNative::GetNParams(const long lMethodNum)
 	case eMethDeleteQueue:
 		return 3;
 	case eMethBindQueue:
-		return 3;
+		return 4;
 	case eMethDeclareExchange:
-		return 5;
+		return 6;
 	case eMethDeleteExchange:
 		return 2;
 	case eMethUnbindQueue:
@@ -415,11 +417,46 @@ bool CAddInNative::GetParamDefValue(const long lMethodNum, const long lParamNum,
 			TV_I4(pvarParamDefValue) = 0;
 			return true;
 		}
+		if (lParamNum == 6) {
+			TV_VT(pvarParamDefValue) = VTYPE_BOOL;
+			TV_BOOL(pvarParamDefValue) = false;
+			return true;
+		}
 		return false;
 	case eMethDeclareQueue:
 		if (lParamNum == 5) {
 			TV_VT(pvarParamDefValue) = VTYPE_I4;
 			TV_I4(pvarParamDefValue) = 0;
+			return true;
+		}
+		if (lParamNum == 6) {
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			TV_WSTR(pvarParamDefValue) = nullptr;
+			pvarParamDefValue->wstrLen = 0;
+			return true;
+		}
+		return false;
+	case eMethDeclareExchange:
+		if (lParamNum == 5) {
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			TV_WSTR(pvarParamDefValue) = nullptr;
+			pvarParamDefValue->wstrLen = 0;
+			return true;
+		}
+		return false;
+	case eMethBasicPublish:
+		if (lParamNum == 5) {
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			TV_WSTR(pvarParamDefValue) = nullptr;
+			pvarParamDefValue->wstrLen = 0;
+			return true;
+		}
+		return false;
+	case eMethBindQueue:
+		if (lParamNum == 3) {
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			TV_WSTR(pvarParamDefValue) = nullptr;
+			pvarParamDefValue->wstrLen = 0;
 			return true;
 		}
 		return false;
@@ -439,6 +476,7 @@ bool CAddInNative::HasRetVal(const long lMethodNum)
 	case eMethBasicConsumeMessage:
 	case eMethDeclareQueue:
 	case eMethGetPriority:
+	case eMethGetRoutingKey:
 		return true;
     default:
         return false;
@@ -460,14 +498,16 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 			paParams[1].uintVal, 
 			Utils::wsToString(paParams[2].pwstrVal),
 			Utils::wsToString(paParams[3].pwstrVal),
-			Utils::wsToString(paParams[4].pwstrVal)
+			Utils::wsToString(paParams[4].pwstrVal),
+			paParams[6].bVal
 		);
 	case eMethBasicPublish:
 		return client->basicPublish(
 			Utils::wsToString(paParams[0].pwstrVal),
 			Utils::wsToString(paParams[1].pwstrVal),
 			Utils::wsToString(paParams[2].pwstrVal),
-			paParams[4].bVal
+			paParams[4].bVal,
+			Utils::wsToString(paParams[5].pwstrVal)
 		);
 	case eMethBasicCancel:
 		return client->basicCancel();
@@ -488,7 +528,8 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 		return client->bindQueue(
 			Utils::wsToString(paParams[0].pwstrVal),
 			Utils::wsToString(paParams[1].pwstrVal),
-			Utils::wsToString(paParams[2].pwstrVal)
+			Utils::wsToString(paParams[2].pwstrVal),
+			Utils::wsToString(paParams[3].pwstrVal)
 		);
 	case eMethUnbindQueue:
 		return client->unbindQueue(
@@ -502,7 +543,8 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 			Utils::wsToString(paParams[1].pwstrVal),
 			paParams[2].bVal,
 			paParams[3].bVal,
-			paParams[4].bVal
+			paParams[4].bVal,
+			Utils::wsToString(paParams[5].pwstrVal)
 		);
 	case eMethDeleteExchange:
 		return client->deleteExchange(
@@ -535,13 +577,15 @@ bool CAddInNative::CallAsFunc(const long lMethodNum,
 		return declareQueue(pvarRetValue, paParams);
 	case eMethGetPriority:
 		return getPriority(pvarRetValue, paParams);
+	case eMethGetRoutingKey:
+		return getRoutingKey(pvarRetValue, paParams);
 	default:
 		return false;
     }
 }
 
 bool CAddInNative::getLastError(tVariant* pvarRetValue) {
-	wchar_t* error = client->getLastError();
+	const wchar_t* error = client->getLastError();
 	setWStringToTVariant(pvarRetValue, error);
 	TV_VT(pvarRetValue) = VTYPE_PWSTR;
 	return true;
@@ -568,7 +612,8 @@ bool CAddInNative::declareQueue(tVariant* pvarRetValue, tVariant* paParams) {
 		paParams[1].bVal,
 		paParams[2].bVal,
 		paParams[4].bVal,
-		paParams[5].ushortVal
+		paParams[5].ushortVal,
+		Utils::wsToString(paParams[6].pwstrVal)
 	);
 	setWStringToTVariant(pvarRetValue, Utils::stringToWs(queueName).c_str());
 	TV_VT(pvarRetValue) = VTYPE_PWSTR;
@@ -613,6 +658,14 @@ bool CAddInNative::getPriority(tVariant* pvarRetValue, tVariant* paParams) {
 
 	TV_VT(pvarRetValue) = VTYPE_I4;
 	TV_INT(pvarRetValue) = priority;
+	return true;
+}
+
+bool CAddInNative::getRoutingKey(tVariant* pvarRetValue, tVariant* paParams) {
+	std::string routingKey = client->getRoutingKey();
+
+	setWStringToTVariant(pvarRetValue, Utils::stringToWs(routingKey).c_str());
+	TV_VT(pvarRetValue) = VTYPE_PWSTR;
 	return true;
 }
 
@@ -695,10 +748,11 @@ bool CAddInNative::validateDeclDelQueue(tVariant* paParams, long const lMethodNu
 	for (int i = 0; i < lSizeArray; i++)
 	{
 		ENUMVAR typeCheck = VTYPE_BOOL;
-		if (i == 0)
+		if (i == 0 || i == 6)
 		{
 			typeCheck = VTYPE_PWSTR;
-		} else if(i == 5)
+		} 
+		else if(i == 5)
 		{
 			typeCheck = VTYPE_I4;
 		}
@@ -730,7 +784,7 @@ bool CAddInNative::validateDeclareExchange(tVariant* paParams, long const lMetho
 	for (int i = 0; i < lSizeArray; i++)
 	{
 		ENUMVAR typeCheck = VTYPE_PWSTR;
-		if (i > 1)
+		if (i > 1 && i < 5)
 		{
 			typeCheck = VTYPE_BOOL;
 		}
@@ -762,6 +816,10 @@ bool CAddInNative::validateConnect(tVariant* paParams, long const lMethodNum, lo
 		{
 			typeCheck = VTYPE_I4;
 		}
+		if (i == 6) 
+		{
+			typeCheck = VTYPE_BOOL;
+		}
 		if (!checkInputParameter(paParams, lMethodNum, i, typeCheck))
 		{
 			return false;
@@ -777,7 +835,8 @@ bool CAddInNative::validateBasicPublish(tVariant* paParams, long const lMethodNu
 		if (i == 3) {
 			typeCheck = VTYPE_I4;
 		}
-		else if (i == 4) {
+		else if (i == 4) 
+		{
 			typeCheck = VTYPE_BOOL;
 		}
 		if (!checkInputParameter(paParams, lMethodNum, i, typeCheck))
@@ -794,7 +853,7 @@ bool CAddInNative::checkInputParameter(tVariant* params, long const methodNum, l
 
 	if (!(TV_VT(&params[parameterNum]) == type)) {
 		std::string errDescr = "Error occured when calling method "
-		+ Utils::wsToString(GetMethodName(methodNum, 1))
+		+ Utils::wsToString(g_MethodNames[methodNum])
 		+ "() - wrong type for parameter number "
 		+ Utils::anyToString(parameterNum);
 

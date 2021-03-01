@@ -5,8 +5,13 @@
 #include <cassert>
 #include <iostream>
 #include <Poco/Net/StreamSocket.h>
+#include <Poco/Net/SecureStreamSocket.h>
+#include <Poco/Net/RejectCertificateHandler.h>
+#include <Poco/Net/SSLManager.h>
 
 #include "SimplePocoHandler.h"
+
+using namespace Poco::Net;
 
 namespace
 {
@@ -65,7 +70,7 @@ namespace
 
 struct SimplePocoHandlerImpl
 {
-	SimplePocoHandlerImpl() :
+	SimplePocoHandlerImpl(bool ssl, const std::string& host) :
 		connected(false),
 		connection(nullptr),
 		quit(false),
@@ -74,9 +79,29 @@ struct SimplePocoHandlerImpl
 		outBuffer(SimplePocoHandler::BUFFER_SIZE),
 		tmpBuff(SimplePocoHandler::TEMP_BUFFER_SIZE)
 	{
+		initializeSSL();
+		if (ssl) 
+		{
+			// Replace with AcceptCertificateHandler to skip cert verification 
+			Poco::SharedPtr<InvalidCertificateHandler> pCert = new RejectCertificateHandler(false);
+			Context::Ptr pContext = new Poco::Net::Context(Context::TLSV1_2_CLIENT_USE, "");
+			SSLManager::instance().initializeClient(0, pCert, pContext);
+			SecureStreamSocket* sslSocket = new SecureStreamSocket();
+			sslSocket->setPeerHostName(host);
+			sslSocket->setLazyHandshake(true);
+			socket.reset(sslSocket);
+		}
+		else
+		{
+			socket.reset(new StreamSocket());
+		}
 	}
 
-	Poco::Net::StreamSocket socket;
+	~SimplePocoHandlerImpl() {
+		uninitializeSSL();
+	}
+
+	std::unique_ptr<Poco::Net::StreamSocket> socket;
 	bool connected;
 	AMQP::Connection* connection;
 	bool quit;
@@ -85,15 +110,16 @@ struct SimplePocoHandlerImpl
 	Buffer outBuffer;
 	std::vector<char> tmpBuff;
 };
-SimplePocoHandler::SimplePocoHandler(const std::string& host, uint16_t port) :
-	m_impl(new SimplePocoHandlerImpl)
+SimplePocoHandler::SimplePocoHandler(const std::string& host, uint16_t port, bool ssl) :
+	m_impl(new SimplePocoHandlerImpl(ssl, host))
 {
 	const Poco::Net::SocketAddress address(host, port);
-	m_impl->socket.connect(address);
-	m_impl->socket.setBlocking(true);
-	m_impl->socket.setSendBufferSize(TEMP_BUFFER_SIZE);
-	m_impl->socket.setReceiveBufferSize(TEMP_BUFFER_SIZE);
-	m_impl->socket.setKeepAlive(true);
+	m_impl->socket->connect(address);
+	m_impl->socket->setBlocking(true);
+	m_impl->socket->setReceiveTimeout(Poco::Timespan(0, 100000));
+	m_impl->socket->setSendBufferSize(TEMP_BUFFER_SIZE);
+	m_impl->socket->setReceiveBufferSize(TEMP_BUFFER_SIZE);
+	m_impl->socket->setKeepAlive(true);
 }
 
 SimplePocoHandler::~SimplePocoHandler()
@@ -101,7 +127,13 @@ SimplePocoHandler::~SimplePocoHandler()
 	close();
 }
 
-void SimplePocoHandler::loopThread(SimplePocoHandler* clazz) {
+void SimplePocoHandler::setConnection(AMQP::Connection* connection)
+{
+	m_impl->connection = connection;
+}
+
+void SimplePocoHandler::loopThread(SimplePocoHandler* clazz)
+{
 	clazz->resetQuitRead();
 	clazz->loopRead();
 }
@@ -109,29 +141,26 @@ void SimplePocoHandler::loopThread(SimplePocoHandler* clazz) {
 void SimplePocoHandler::loopRead()
 {
 
-	try
+	while (!m_impl->quitRead)
 	{
-		while (!m_impl->quitRead)
+		try
 		{
 			loopIteration();
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
-	}
-	catch (const Poco::Exception& exc)
-	{
-		std::cerr << "Poco exception " << exc.displayText();
+		catch (const Poco::Exception& exc)
+		{
+			std::cerr << "Poco exception " << exc.displayText() << std::endl;
+		}
 	}
 }
 
 void SimplePocoHandler::loop()
 {
-	// 
 	try
 	{
 		while (!m_impl->quit)
 		{
 			loopIteration();
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
 
 		if (m_impl->quit && m_impl->outBuffer.available())
@@ -142,26 +171,37 @@ void SimplePocoHandler::loop()
 	}
 	catch (const Poco::Exception& exc)
 	{
-		std::cerr << "Poco exception " << exc.displayText();
+		std::cerr << "Poco exception " << exc.displayText() << std::endl;
 	}
 	m_impl->quit = false; // reset channel for repeatable using
 }
 
 void SimplePocoHandler::loopIteration() {
 
-	if (m_impl->socket.available() > 0)
-	{
-		const int avail = m_impl->socket.available();
-		if (m_impl->tmpBuff.size() < avail)
+	sendDataFromBuffer();
+
+	try {
+		int avail = m_impl->connection->expected();
+		while (avail > 0)
 		{
-			m_impl->tmpBuff.resize(avail, 0);
+			if (m_impl->tmpBuff.size() < avail)
+			{
+				m_impl->tmpBuff.resize(avail, 0);
+			}
+			int received = m_impl->socket->receiveBytes(&m_impl->tmpBuff[0], avail);
+			if (received < 0) {
+				break;
+			}
+			m_impl->inputBuffer.write(m_impl->tmpBuff.data(), received);
+			avail = m_impl->socket->available();
 		}
-
-		m_impl->socket.receiveBytes(&m_impl->tmpBuff[0], avail);
-		m_impl->inputBuffer.write(m_impl->tmpBuff.data(), avail);
-
 	}
-	if (m_impl->socket.available() < 0)
+	catch (const Poco::TimeoutException&)
+	{
+		// Не логировать. Исключение периодически поднимается при ожидании ответа от сервера.
+	}
+
+	if (m_impl->socket->available() < 0)
 	{
 		std::cerr << "SOME socket error!!!" << std::endl;
 	}
@@ -199,7 +239,7 @@ void SimplePocoHandler::resetQuitRead()
 
 void SimplePocoHandler::SimplePocoHandler::close()
 {
-	m_impl->socket.close();
+	m_impl->socket->close();
 }
 
 void SimplePocoHandler::onData(
@@ -240,7 +280,7 @@ void SimplePocoHandler::sendDataFromBuffer()
 {
 	if (m_impl->outBuffer.available())
 	{
-		m_impl->socket.sendBytes(m_impl->outBuffer.data(), m_impl->outBuffer.available());
+		m_impl->socket->sendBytes(m_impl->outBuffer.data(), m_impl->outBuffer.available());
 		m_impl->outBuffer.drain();
 	}
 }

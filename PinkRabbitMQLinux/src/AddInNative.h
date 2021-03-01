@@ -26,7 +26,7 @@ class AddInNative : public IComponentBase
 public:
     enum Props
     {
-        ePropVersion,
+        ePropVersion = 0,
         ePropCorrelationId,
         ePropType,
         ePropMessageId,
@@ -43,25 +43,26 @@ public:
     enum Methods
     {
         eMethGetLastError = 0,
-        eMethConnect = 1,
-        eMethDeclareQueue = 2,
-        eMethBasicPublish = 3,
-        eMethBasicConsume = 4,
-        eMethBasicConsumeMessage = 5,
-        eMethBasicCancel = 6,
-        eMethBasicAck = 7,
-        eMethDeleteQueue = 8,
-        eMethBindQueue = 9,
-        eMethBasicReject = 10,
-        eMethDeclareExchange = 11,
-        eMethDeleteExchange = 12,
-        eMethUnbindQueue = 13,
-        eMethSetPriority = 14,
-        eMethGetPriority = 15,
-        eMethLast = 16      // Always last
+        eMethConnect,
+        eMethDeclareQueue,
+        eMethBasicPublish,
+        eMethBasicConsume,
+        eMethBasicConsumeMessage,
+        eMethBasicCancel,
+        eMethBasicAck,
+        eMethDeleteQueue,
+        eMethBindQueue,
+        eMethBasicReject,
+        eMethDeclareExchange,
+        eMethDeleteExchange,
+        eMethUnbindQueue,
+        eMethSetPriority,
+        eMethGetPriority,
+        eMethGetRoutingKey,
+        eMethLast      // Always last
     };
 
-		AddInNative(void);
+    AddInNative(void);
     virtual ~AddInNative();
     // IInitDoneBase
     virtual bool ADDIN_API Init(void*);
@@ -97,16 +98,16 @@ private:
     long findName(const wchar_t* names[], const wchar_t* name, const uint32_t size) const;
     void addError(uint32_t wcode, const wchar_t* source, const wchar_t* descriptor, long code);
 
-	bool isNumericParameter(tVariant*);
-	long numericValue(tVariant*);
+    bool isNumericParameter(tVariant*);
+    long numericValue(tVariant*);
 
-	void ToV8String(const wchar_t* wstr, tVariant*);
+    void ToV8String(const wchar_t* wstr, tVariant*);
 
     IAddInDefBaseEx    *m_iConnect;
     IMemoryManager     *m_iMemory;
 
     RabbitMQClient client;
-    const wchar_t* m_version = L"1.8";
+    const wchar_t* m_version = L"1.10";
     bool debugMode = false;
 
     void setWStringToTVariant(tVariant* dest, const wchar_t* source);
@@ -116,6 +117,7 @@ private:
     bool basicConsume(tVariant* pvarRetValue, tVariant* paParams);
     bool basicConsumeMessage(tVariant* pvarRetValue, tVariant* paParams);
     bool getPriority(tVariant* pvarRetValue, tVariant* paParams);
+    bool getRoutingKey(tVariant* pvarRetValue, tVariant* paParams);
     bool declareQueue(tVariant* pvarRetValue, tVariant* paParams);
     bool validateConnect(tVariant* paParams, long const lMethodNum, long const lSizeArray);
     bool validateBasicPublish(tVariant* paParams, long const lMethodNum, long const lSizeArray);

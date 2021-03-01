@@ -74,6 +74,9 @@ public:
 	// Push to queue with rvalue reference.
 	void push(T&& v)
 	{
+		if (state == State::CLOSED) {
+			return;
+		}
 		// Create temporary queue.
 		decltype(list) tmpList;
 		tmpList.push_back(v);
@@ -87,8 +90,9 @@ public:
 				cvPush.wait(lock);
 
 			// Check that the queue is not closed and thus pushing is allowed.
-			if (state == State::CLOSED)
-				throw std::runtime_error("Trying to push to a closed queue.");
+			if (state == State::CLOSED) {
+				return;
+			}
 
 			// Push to queue.
 			currentSize += 1;
@@ -138,11 +142,16 @@ public:
 		state = State::CLOSED;
 
 		// Notify all consumers.
+		cvPush.notify_all();
 		cvPop.notify_all();
 	}
 
 	bool empty() {
 		return list.empty();
+	}
+
+	void reopen() {
+		state = State::OPEN;
 	}
 
 private:

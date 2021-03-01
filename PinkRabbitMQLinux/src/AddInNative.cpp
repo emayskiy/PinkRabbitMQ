@@ -69,6 +69,7 @@ static const wchar_t *g_MethodNames[] =
 	L"UnbindQueue",
 	L"SetPriority",
 	L"GetPriority",
+	L"GetRoutingKey",
 };
 
 
@@ -90,6 +91,7 @@ static const wchar_t *g_MethodNamesRu[] =
 	L"UnbindQueue",
 	L"SetPriority",
 	L"GetPriority",
+	L"GetRoutingKey",
 };
 
 static const wchar_t g_ComponentNameAddIn[] = L"PinkRabbitMQ";
@@ -135,6 +137,11 @@ const WCHAR_T* GetClassNames()
 
 AddInNative::AddInNative() : m_iConnect(nullptr), m_iMemory(nullptr)
 {
+	static bool sslInited = false;
+	if (!sslInited){
+		SSL_library_init();
+		sslInited = true;
+	} 
 }
 
 AddInNative::~AddInNative()
@@ -397,11 +404,11 @@ long AddInNative::GetNParams(const long lMethodNum)
 	case eMethGetLastError:
 		return 0;
 	case eMethConnect:
-		return 6;
+		return 7;
 	case eMethDeclareQueue:
-		return 6;
+		return 7;
 	case eMethBasicPublish:
-		return 5;
+		return 6;
 	case eMethBasicConsume:
 		return 5;
 	case eMethBasicConsumeMessage:
@@ -415,9 +422,9 @@ long AddInNative::GetNParams(const long lMethodNum)
 	case eMethDeleteQueue:
 		return 3;
 	case eMethBindQueue:
-		return 3;
+		return 4;
 	case eMethDeclareExchange:
-		return 5;
+		return 6;
 	case eMethDeleteExchange:
 		return 2;
 	case eMethUnbindQueue:
@@ -442,11 +449,46 @@ bool AddInNative::GetParamDefValue(const long lMethodNum, const long lParamNum,	
 			TV_I4(pvarParamDefValue) = 0;
 			return true;
 		}
+		if (lParamNum == 6) {
+			TV_VT(pvarParamDefValue) = VTYPE_BOOL;
+			TV_BOOL(pvarParamDefValue) = false;
+			return true;
+		}
 		return false;
 	case eMethDeclareQueue:
 		if (lParamNum == 5) {
 			TV_VT(pvarParamDefValue) = VTYPE_I4;
 			TV_I4(pvarParamDefValue) = 0;
+			return true;
+		}
+		if (lParamNum == 6) {
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			TV_WSTR(pvarParamDefValue) = nullptr;
+			pvarParamDefValue->wstrLen = 0;
+			return true;
+		}
+		return false;
+	case eMethDeclareExchange:
+		if (lParamNum == 5) {
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			TV_WSTR(pvarParamDefValue) = nullptr;
+			pvarParamDefValue->wstrLen = 0;
+			return true;
+		}
+		return false;
+	case eMethBindQueue:
+		if (lParamNum == 3) {
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			TV_WSTR(pvarParamDefValue) = nullptr;
+			pvarParamDefValue->wstrLen = 0;
+			return true;
+		}
+		return false;
+	case eMethBasicPublish:
+		if (lParamNum == 5) {
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			TV_WSTR(pvarParamDefValue) = nullptr;
+			pvarParamDefValue->wstrLen = 0;
 			return true;
 		}
 		return false;
@@ -467,6 +509,7 @@ bool AddInNative::HasRetVal(const long lMethodNum)
 	case eMethBasicConsumeMessage:
 	case eMethDeclareQueue:
 	case eMethGetPriority:
+	case eMethGetRoutingKey:
 		return true;
 	default:
 		return false;
@@ -484,17 +527,20 @@ bool AddInNative::CallAsProc(const long lMethodNum, tVariant* paParams, const lo
 		case eMethConnect:
 		{
 			std::string host = inputParamToStr(paParams, 0);
+			uint16_t port = (uint16_t) paParams[1].intVal;
 			std::string login = inputParamToStr(paParams, 2);
 			std::string pwd = inputParamToStr(paParams, 3);
 			std::string vhost = inputParamToStr(paParams, 4);
-			return client.connect(host, 5672, login, pwd, vhost);
+			bool ssl = paParams[6].bVal;
+			return client.connect(host, port, login, pwd, vhost, ssl);
 		}
 		case eMethBasicPublish:
 		{
 			std::string exchange = inputParamToStr(paParams, 0);
 			std::string routingKey = inputParamToStr(paParams, 1);
 			std::string message = inputParamToStr(paParams, 2);
-			return client.basicPublish(exchange, routingKey, message, paParams[4].bVal);
+			std::string props = inputParamToStr(paParams, 5);
+			return client.basicPublish(exchange, routingKey, message, paParams[4].bVal, props);
 			return true;
 		}
 		case eMethBasicCancel:
@@ -520,7 +566,8 @@ bool AddInNative::CallAsProc(const long lMethodNum, tVariant* paParams, const lo
 			std::string queue = inputParamToStr(paParams, 0);
 			std::string exchange = inputParamToStr(paParams, 1);
 			std::string routingKey = inputParamToStr(paParams, 2);
-			return client.bindQueue(queue, exchange, routingKey);
+			std::string props = inputParamToStr(paParams, 3);
+			return client.bindQueue(queue, exchange, routingKey, props);
 		}
 		case eMethUnbindQueue:
 		{
@@ -533,7 +580,8 @@ bool AddInNative::CallAsProc(const long lMethodNum, tVariant* paParams, const lo
 		{
 			std::string name = inputParamToStr(paParams, 0);
 			std::string type = inputParamToStr(paParams, 1);
-			return client.declareExchange(name, type, paParams[2].bVal, paParams[3].bVal, paParams[4].bVal);
+			std::string props = inputParamToStr(paParams, 5);
+			return client.declareExchange(name, type, paParams[2].bVal, paParams[3].bVal, paParams[4].bVal, props);
 		}
 		case eMethDeleteExchange:
 		{
@@ -551,7 +599,7 @@ bool AddInNative::CallAsProc(const long lMethodNum, tVariant* paParams, const lo
 
 std::string AddInNative::inputParamToStr(tVariant* paParams, int parIndex) {
 	WcharWrapper wWrapper(paParams[parIndex].pwstrVal);
-	std::string res = Utils::wsToString(std::wstring(wWrapper));
+	std::string res = Utils::wsToString(wWrapper);
 	return res;
 }
 
@@ -573,6 +621,8 @@ bool AddInNative::CallAsFunc(const long lMethodNum, tVariant* pvarRetValue, tVar
 		return declareQueue(pvarRetValue, paParams);
 	case eMethGetPriority:
 		return getPriority(pvarRetValue, paParams);
+	case eMethGetRoutingKey:
+		return getRoutingKey(pvarRetValue, paParams);
 	default:
 		return false;
 	}
@@ -582,6 +632,9 @@ bool AddInNative::CallAsFunc(const long lMethodNum, tVariant* pvarRetValue, tVar
 
 bool AddInNative::getLastError(tVariant* pvarRetValue) {
 	std::string error = client.getLastError();
+	if (debugMode) {
+		std::cerr << "LastError: " << error << std::endl;
+	}
 	setWStringToTVariant(pvarRetValue, Utils::stringToWs(error).c_str());
 	TV_VT(pvarRetValue) = VTYPE_PWSTR;
 	return true;
@@ -605,12 +658,14 @@ bool AddInNative::basicConsume(tVariant* pvarRetValue, tVariant* paParams) {
 
 bool AddInNative::declareQueue(tVariant* pvarRetValue, tVariant* paParams) {
 	std::string name = inputParamToStr(paParams, 0);
+	std::string props = inputParamToStr(paParams, 6);
 	std::string queueName = client.declareQueue(
 		name,
 		paParams[1].bVal,
 		paParams[2].bVal,
 		paParams[4].bVal,
-		paParams[5].ushortVal
+		paParams[5].ushortVal,
+		props
 	);
 
 	setWStringToTVariant(pvarRetValue, Utils::stringToWs(queueName).c_str());
@@ -663,6 +718,14 @@ bool AddInNative::getPriority(tVariant* pvarRetValue, tVariant* paParams) {
 	TV_VT(pvarRetValue) = VTYPE_I4;
 	TV_INT(pvarRetValue) = priority; 
 
+	return true;
+}
+
+bool AddInNative::getRoutingKey(tVariant* pvarRetValue, tVariant* paParams) {
+	std::string routingKey = client.getRoutingKey();
+
+	setWStringToTVariant(pvarRetValue, Utils::stringToWs(routingKey).c_str());
+	TV_VT(pvarRetValue) = VTYPE_PWSTR;
 	return true;
 }
 
@@ -761,7 +824,7 @@ bool AddInNative::validateDeclDelQueue(tVariant* paParams, long const lMethodNum
 	for (int i = 0; i < lSizeArray; i++)
 	{
 		ENUMVAR typeCheck = VTYPE_BOOL;
-		if (i == 0)
+		if (i == 0 || i == 6)
 		{
 			typeCheck = VTYPE_PWSTR;
 		}
@@ -797,7 +860,7 @@ bool AddInNative::validateDeclareExchange(tVariant* paParams, long const lMethod
 	for (int i = 0; i < lSizeArray; i++)
 	{
 		ENUMVAR typeCheck = VTYPE_PWSTR;
-		if (i > 1)
+		if (i > 1 && i < 5)
 		{
 			typeCheck = VTYPE_BOOL;
 		}
@@ -829,7 +892,12 @@ bool AddInNative::validateConnect(tVariant* paParams, long const lMethodNum, lon
 		{
 			typeCheck = VTYPE_I4;
 		}
-		else {
+		else if (i == 6) 
+		{
+			typeCheck = VTYPE_BOOL;
+		}
+		else 
+		{
 			typeCheck = VTYPE_PWSTR;
 			if (paParams[i].intVal == 0) {
 				return false;
@@ -863,17 +931,22 @@ bool AddInNative::validateBasicPublish(tVariant* paParams, long const lMethodNum
 
 bool AddInNative::checkInputParameter(tVariant* params, long const methodNum, long const parameterNum, ENUMVAR type) {
 
-	const wchar_t* methodName = WcharWrapper(GetMethodName(methodNum, 1));
-
 	if (debugMode) {
 		return true;
 	}
 
 	if (!(TV_VT(&params[parameterNum]) == type)) {
+		const WCHAR_T* methName = GetMethodName(methodNum, 1);
+		const wchar_t* methodName = WcharWrapper(methName);
+
 		std::string errDescr = "Error occured when calling method "
 			+ Utils::wsToString(methodName)
 			+ "() - wrong type for parameter number "
 			+ Utils::anyToString(parameterNum);
+		
+		if (methName && m_iMemory){
+			m_iMemory->FreeMemory((void**)&methName);
+		}
 
 		addError(ADDIN_E_FAIL, L"NativeRabbitMQ", Utils::stringToWs(errDescr).c_str(), 1);
 		client.updateLastError(errDescr.c_str());
